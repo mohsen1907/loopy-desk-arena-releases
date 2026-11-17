@@ -1,0 +1,85 @@
+name: Publish Windows update
+run-name: Vendor publish ${{ inputs.version }} ${{ inputs.build_run }} ${{ inputs.channel }} ${{ inputs.request_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        required: true
+        type: string
+      build_run:
+        required: true
+        type: string
+      channel:
+        required: true
+        type: choice
+        options: [test, stable]
+      notes_ar:
+        required: true
+        type: string
+      notes_en:
+        required: true
+        type: string
+      request_id:
+        required: true
+        type: string
+      approval:
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-update-publication
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'mohsen1907/loopy-desk-arena-releases' && github.ref == 'refs/heads/main'
+    environment: windows-update-publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: source
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: mohsen1907/playstation_hub
+          ref: 23a006bc03544586cf723f5094795d42347c6dcf
+          token: ${{ secrets.VENDOR_SOURCE_READ_TOKEN }}
+          persist-credentials: false
+          path: source
+      - name: Verify publication approval
+        if: inputs.channel == 'stable'
+        env:
+          APPROVAL_KEY: ${{ secrets.VENDOR_STABLE_APPROVAL_KEY }}
+          APPROVAL: ${{ inputs.approval }}
+          VERSION: ${{ inputs.version }}
+          BUILD_RUN: ${{ inputs.build_run }}
+          REQUEST_ID: ${{ inputs.request_id }}
+          NOTES_AR: ${{ inputs.notes_ar }}
+          NOTES_EN: ${{ inputs.notes_en }}
+        run: python3 tool/vendor/verify_stable_approval.py
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          channel: stable
+          flutter-version: 3.47.2
+          cache: false
+      - run: flutter pub get
+      - name: Download the verified tag build
+        env:
+          GH_TOKEN: ${{ secrets.VENDOR_SOURCE_READ_TOKEN }}
+          VERSION: ${{ inputs.version }}
+          BUILD_RUN: ${{ inputs.build_run }}
+        run: GITHUB_REPOSITORY=mohsen1907/playstation_hub bash tool/vendor/windows_publish.sh download
+      - name: Sign and publish the update
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPDATE_KEY: ${{ secrets.VENDOR_UPDATE_SIGNING_SEED }}
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+          NOTES_AR: ${{ inputs.notes_ar }}
+          NOTES_EN: ${{ inputs.notes_en }}
+        run: bash tool/vendor/windows_publish.sh publish
